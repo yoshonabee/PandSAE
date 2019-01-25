@@ -1,5 +1,5 @@
-from ph_utils import *
-from ph_model import *
+from utils import *
+from model import *
 
 import os
 import sys
@@ -63,7 +63,7 @@ if cuda:
 	MSELoss.cuda()
 
 for epoch in range(EPOCH):
-	if ((epoch + 1) - 10) % 10 == 1 or ((epoch + 1) - 10) % 10 == 6:
+	if ((epoch + 1) - 10) % 10 == 5 or ((epoch + 1) - 10) % 10 == 0:
 		for i, ((s, audio), (speaker_s, speaker_audio), (other_s, other_audio), (positive_audio, negative_audio)) in enumerate(dataLoader):
 			EpOptim.zero_grad()
 			EsOptim.zero_grad()
@@ -110,7 +110,7 @@ for epoch in range(EPOCH):
 			_, dis_value = Dis(None, None, vp)
 
 			dis_grad = grad(dis_value, vp)
-			dis_reg = MSELoss(dis_grad, 1)
+			dis_reg = MSELoss(dis_grad, torch.ones([1]).float().cuda())
 
 			loss = reconstructLoss + speaker_loss + dis_loss + dis_reg
 			loss.backward()
@@ -129,6 +129,8 @@ for epoch in range(EPOCH):
 				audio = audio.cuda()
 				other_s = other_s.cuda()
 				other_audio = other_audio.cuda()
+				positive_audio = positive_audio.cuda()
+				negative_audio = negative_audio.cuda()
 
 			pho = Ep(audio)
 			other = Ep(other_audio)
@@ -145,19 +147,19 @@ for epoch in range(EPOCH):
 			positive = torch.cat([pho, positive], 1)
 			negative = torch.cat([pho, negative], 1)
 
-			alpha = torch.rand(BATCH_SIZE, 1)
+			alpha = torch.rand(positive.size(0), 1).cuda()
 			alpha = alpha.expand_as(positive)
 
 			vp = alpha * positive + (1 - alpha) * negative
 			_, dis_value = Dis(None, None, vp)
 
-			dis_grad = grad(dis_value, vp)
-			dis_reg = MSELoss(dis_grad, 1)
+			dis_grad = torch.mean(grad(dis_loss, vp)[0])
+			dis_reg = MSELoss(dis_grad, torch.full([1], 1).float().cuda())
 
-			loss = dis_loss + dis_reg
+			loss = dis_loss
 			loss.backward()
 
 			DisOptim.step()
 
-			if (i + 1) % 100 == 0: print(f'epoch:{epoch + 1} | iter:{i + 1} | loss:{dis_loss.item()} | D')
+			if (i + 1) % 100 == 0: print(f'epoch:{epoch + 1} | iter:{i + 1} | loss:{dis_loss.item()} | reg:{dis_reg.item()} | grad:{dis_grad.item()} | D')
 		

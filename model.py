@@ -1,4 +1,4 @@
-from ph_utils import *
+from utils import *
 import random
 
 import torch
@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 class Encoder(nn.Module):
 	def __init__(self):
 		super(Encoder, self).__init__()
-		self.GRU1 = nn.GRU(13, 128, batch_first=True)
+		self.GRU1 = nn.GRU(39, 128, batch_first=True)
 		self.GRU2 = nn.GRU(128, 128, batch_first=True)
 
 	def forward(self, x):
@@ -23,7 +23,7 @@ class Decoder(nn.Module):
 		self.length = length
 		self.GRU1 = nn.GRU(256, 256, batch_first=True)
 		self.GRU2 = nn.GRU(256, 256, batch_first=True)
-		self.linear = nn.Linear(256, 13)
+		self.linear = nn.Linear(256, 39)
 		self.c = cuda
 
 	def forward(self, pho, spe):
@@ -39,7 +39,7 @@ class Decoder(nn.Module):
 		
 		x = x.contiguous().view(-1, x.shape[2])
 		x = self.linear(x)
-		x = x.view(-1, self.length, 13)
+		x = x.view(-1, self.length, 39)
 
 		return(x)
 
@@ -77,13 +77,14 @@ class Discriminator(nn.Module):
 		x = self.l2(x)
 		x = self.l3(x)
 
+		loss = 0
 		if s is not None:
 			w = torch.eq(s, other_s).float()
 			for i in range(w.shape[0]):
 				if w[i] == 0: w[i] = -1
 			loss = torch.mean(w.mul(x))
 		
-		return loss, x
+		return loss, torch.mean(x)
 
 class training_set(Dataset):
 	def __init__(self, audio_list, speaker_list):
