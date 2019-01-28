@@ -26,6 +26,7 @@ modelpath = sys.argv[2].strip('/')
 LR = 0.0001
 BATCH_SIZE = 32
 EPOCH = 500
+LAMBDA = 10
 
 audio_list = loadnpy(sys.argv[1], verbose=1)
 audio_list, mean, std = normalize(audio_list)
@@ -45,8 +46,8 @@ Es = Encoder()
 Dec = Decoder(train_set.audio_list[0].audio.shape[0], cuda)
 ReconCriterion = ReconstructLoss()
 Dis = Discriminator()
+DisLoss = DiscriminatorLoss()
 SpeakerCriterion = SpeakerLoss(0.01)
-MSELoss = nn.MSELoss()
 
 EpOptim = Adam(Ep.parameters(), lr=LR, betas=(0.5, 0.9))
 EsOptim = Adam(Es.parameters(), lr=LR, betas=(0.5, 0.9))
@@ -60,14 +61,15 @@ if cuda:
 	ReconCriterion.cuda()
 	Dis.cuda()
 	SpeakerCriterion.cuda()
-	MSELoss.cuda()
+	DisLoss.cuda()
 
 for epoch in range(EPOCH):
-	if ((epoch + 1) - 10) % 10 == 5 or ((epoch + 1) - 10) % 10 == 0:
+	if (epoch + 1) % 4 == 0:
 		for i, ((s, audio), (speaker_s, speaker_audio), (other_s, other_audio), (positive_audio, negative_audio)) in enumerate(dataLoader):
 			EpOptim.zero_grad()
 			EsOptim.zero_grad()
 			DecOptim.zero_grad()
+			DisOptim.zero_grad()
 
 			if cuda:
 				s = s.cuda()
@@ -93,35 +95,40 @@ for epoch in range(EPOCH):
 			pho = pho.view(pho.size(1), -1)
 			other = other.view(other.size(1), -1)
 			vp = torch.cat([pho, other], 1)
-			dis_loss, _ = Dis(s, other_s, vp)
-			# print(reconstructLoss.item(), speaker_loss.item(), dis_loss.item())
+			dis_value = Dis(vp)
+			dis_loss = DisLoss(s, other_s, dis_value)
 
-			positive = Ep(positive_audio)
-			negative = Ep(negative_audio)
-			positive = positive.view(positive.size(1), -1)
-			negative = negative.view(negative.size(1), -1)
-			positive = torch.cat([pho, positive], 1)
-			negative = torch.cat([pho, negative], 1)
+			# positive = Ep(positive_audio)
+			# negative = Ep(negative_audio)
+			# positive = positive.view(positive.size(1), -1)
+			# negative = negative.view(negative.size(1), -1)
+			# positive = torch.cat([pho, positive], 1)
+			# negative = torch.cat([pho, negative], 1)
 
-			alpha = torch.rand(BATCH_SIZE, 1)
-			alpha = alpha.expand_as(positive)
+			# alpha = torch.rand(positive.size(0), 1).cuda()
+			# alpha = alpha.expand_as(positive)
 
-			vp = alpha * positive + (1 - alpha) * negative
-			_, dis_value = Dis(None, None, vp)
+			# vp = alpha * positive + (1 - alpha) * negative
+			# dis_value = Dis(vp)
 
-			dis_grad = grad(dis_value, vp)
-			dis_reg = MSELoss(dis_grad, torch.ones([1]).float().cuda())
+			# dis_grad = grad(dis_value, vp, grad_outputs=torch.ones(dis_value.size()).cuda() if cuda else torch.ones(vp.size()), retain_graph=True, create_graph=True)[0]
+			
+			# dis_reg = torch.mean(torch.sqrt(torch.sum(dis_grad ** 2, 1) + 1e-12))
 
-			loss = reconstructLoss + speaker_loss + dis_loss + dis_reg
+			loss = reconstructLoss + speaker_loss + dis_loss
 			loss.backward()
 
 			EpOptim.step()
 			EsOptim.step()
 			DecOptim.step()
 
-			if (i + 1) % 100 == 0: print(f'epoch:{epoch + 1} | iter:{i + 1} | loss:{loss.item()}')
+			if (i + 1) % 100 == 0:
+				print(f'epoch:{epoch + 1} | iter:{i + 1} | loss:{loss.item()} | reg:{dis_reg.item()}')
 	else:
 		for i, ((s, audio), _, (other_s, other_audio), (positive_audio, negative_audio)) in enumerate(dataLoader):
+			EpOptim.zero_grad()
+			EsOptim.zero_grad()
+			DecOptim.zero_grad()
 			DisOptim.zero_grad()
 
 			if cuda:
@@ -137,8 +144,8 @@ for epoch in range(EPOCH):
 			pho = pho.view(pho.size(1), -1)
 			other = other.view(other.size(1), -1)
 			vp = torch.cat([pho, other], 1)
-			dis_loss, _ = Dis(s, other_s, vp)
-			# print(reconstructLoss.item(), speaker_loss.item(), dis_loss.item())
+			dis_value = Dis(vp)
+			dis_loss = DisLoss(s, other_s, dis_value)
 
 			positive = Ep(positive_audio)
 			negative = Ep(negative_audio)
@@ -151,15 +158,20 @@ for epoch in range(EPOCH):
 			alpha = alpha.expand_as(positive)
 
 			vp = alpha * positive + (1 - alpha) * negative
-			_, dis_value = Dis(None, None, vp)
+			dis_value = Dis(vp)
 
-			dis_grad = torch.mean(grad(dis_loss, vp)[0])
-			dis_reg = MSELoss(dis_grad, torch.full([1], 1).float().cuda())
+			dis_grad = grad(dis_value, vp, grad_outputs=torch.ones(dis_value.size()).cuda() if cuda else torch.ones(vp.size()), retain_graph=True, create_graph=True)[0]
+			
+			dis_reg = torch.mean(torch.sqrt(torch.sum(dis_grad ** 2, 1) + 1e-12))
 
-			loss = dis_loss
+			loss = -dis_loss + LAMBDA * dis_reg
 			loss.backward()
 
 			DisOptim.step()
 
-			if (i + 1) % 100 == 0: print(f'epoch:{epoch + 1} | iter:{i + 1} | loss:{dis_loss.item()} | reg:{dis_reg.item()} | grad:{dis_grad.item()} | D')
-		
+			if (i + 1) % 100 == 0: print(f'epoch:{epoch + 1} | iter:{i + 1} | loss:{dis_loss.item()} | reg:{dis_reg.item()} | D')
+	
+torch.save(Ep.state_dict(), "Ep.pkl")
+torch.save(Es.state_dict(), "Es.pkl")
+torch.save(Dec.state_dict(), "Des.pkl")
+torch.save(Dis.state_dict(), "Dis.pkl")

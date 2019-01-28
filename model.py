@@ -48,8 +48,8 @@ class ReconstructLoss(nn.Module):
 		super(ReconstructLoss, self).__init__()
 
 	def forward(self, recon, target):
-		dis = torch.sum((recon - target) ** 2)
-		return (dis / recon.size(0)) ** (1/2)
+		dis = torch.sum((recon - target) ** 2, 1)
+		return torch.mean(dis / recon.size(0))
 
 class SpeakerLoss(nn.Module):
 	def __init__(self, l):
@@ -72,19 +72,23 @@ class Discriminator(nn.Module):
 		self.l2 = nn.Linear(128, 128)
 		self.l3 = nn.Linear(128, 1)
 
-	def forward(self, s, other_s, vp):
+	def forward(self, vp):
 		x = self.l1(vp)
 		x = self.l2(x)
 		x = self.l3(x)
 
-		loss = 0
-		if s is not None:
-			w = torch.eq(s, other_s).float()
-			for i in range(w.shape[0]):
-				if w[i] == 0: w[i] = -1
-			loss = torch.mean(w.mul(x))
+		return x
+
+class DiscriminatorLoss(nn.Module):
+	def __init__(self):
+		super(DiscriminatorLoss, self).__init__()
+
+	def forward(self, s, other_s, x):
+		w = torch.eq(s, other_s).float()
+		for i in range(w.shape[0]):
+			if w[i] == 0: w[i] = -1
 		
-		return loss, torch.mean(x)
+		return torch.mean(w.mul(x))
 
 class training_set(Dataset):
 	def __init__(self, audio_list, speaker_list):
@@ -95,17 +99,23 @@ class training_set(Dataset):
 		s = self.audio_list[index].speaker
 		audio = self.audio_list[index].audio
 
-		# if random.random() > 0.5:
-		# 	speaker_audio = random.choice(self.speaker_list[s])
-		# else:
-		# 	speaker_audio = random.choice(self.audio_list)
+		if random.random() > 0.5:
+			speaker_audio = random.choice(self.speaker_list[s])
+		else:
+			speaker_audio = random.choice(self.audio_list)
 
-		speaker_audio = random.choice(self.audio_list)
+		# speaker_audio = random.choice(self.audio_list)
 
 		speaker_s = speaker_audio.speaker
 		speaker_audio = speaker_audio.audio
+
+		if random.random() > 0.5:
+			other_audio = random.choice(self.speaker_list[s])
+		else:
+			other_audio = random.choice(self.audio_list)
 		
-		other_audio = random.choice(self.audio_list)
+		# other_audio = random.choice(self.audio_list)
+		
 		other_s = other_audio.speaker
 		other_audio = other_audio.audio
 
